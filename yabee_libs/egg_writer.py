@@ -1,22 +1,20 @@
 """ Part of the YABEE
 """
 
-import bpy, os, sys, shutil
 from mathutils import *
 from math import pi
-#import io_scene_egg.yabee_libs
-#from . import yabee_libs
-from .texture_processor import SimpleTextures, TextureBaker, RawTextures, PbrTextures
-from .utils import *
-import subprocess
-import imp
-from traceback import format_tb, print_exc
+# from .texture_processor import PbrTextures, TextureBaker
+from .texture_processor import PbrTextures
 
+from .utils import *
+import sys
+import subprocess
+import importlib
+from traceback import print_exc
 
 lib_name = '.'.join(__name__.split('.')[:-1])
-imp.reload(sys.modules[lib_name + '.texture_processor'])
-imp.reload(sys.modules[lib_name + '.utils'])
-
+importlib.reload(sys.modules[lib_name + '.texture_processor'])
+importlib.reload(sys.modules[lib_name + '.utils'])
 
 FILE_PATH = None
 ANIMATIONS = None
@@ -32,26 +30,29 @@ MERGE_ACTOR_MESH = None
 APPLY_MOD = None
 PVIEW = True
 EXPORT_PBS = False
-FORCE_EXPORT_VERTEX_COLORS=False
+FORCE_EXPORT_VERTEX_COLORS = False
 USE_LOOP_NORMALS = False
 STRF = lambda x: '%.6f' % x
 USED_MATERIALS = None
 USED_TEXTURES = None
 
-
 # const used to pack string array into StringProperty
 NAME_SEPARATOR = "\1"
+
+# Custom properties, which are in most cases present and should not be imported/exported.
+BLACK_LIST = ['cycles', 'cycles_visibility', 'cycles_curves', '_RNA_UI']
 
 class Group:
     """
     Representation of the EGG <Group> hierarchy structure as the
     linked list "one to many".
     """
-    def __init__(self, obj, arm_owner = None):
-        self.object = obj #: Link to the blender's object
-        self._yabee_object = None # Internal data
+
+    def __init__(self, obj, arm_owner=None):
+        self.object = obj  #: Link to the blender's object
+        self._yabee_object = None  # Internal data
         self.children = []  #: List of children (Groups)
-        self.arm_owner = None # Armature as owner for bones
+        self.arm_owner = None  # Armature as owner for bones
         if arm_owner and obj.__class__ == bpy.types.Bone:
             self.arm_owner = arm_owner
         if self.object and self.object.__class__ != bpy.types.Bone:
@@ -67,13 +68,13 @@ class Group:
             else:
                 self._yabee_object = EGGBaseObjectData(self.object)
 
-    def update_joints_data(self, actor_data_list = None):
+    def update_joints_data(self, actor_data_list=None):
         if actor_data_list == None:
             actor_data_list = []
-            hierarchy_to_list(self, actor_data_list, base_filter = EGGActorObjectData)
-            #print(tmp)
+            hierarchy_to_list(self, actor_data_list, base_filter=EGGActorObjectData)
+            # print(tmp)
         if not self._yabee_object and self.object \
-           and self.object.__class__ == bpy.types.Bone:
+                and self.object.__class__ == bpy.types.Bone:
             vref = []
             for ad in actor_data_list:
                 if self.object.name in ad._yabee_object.joint_vtx_ref.keys():
@@ -90,18 +91,18 @@ class Group:
         if o.__class__ == bpy.types.Bone and not o.parent:
             return 0
         if p.__class__ != bpy.types.Bone and o.parent == p \
-           and not (p and p.type == 'ARMATURE' and o.parent_bone):
+                and not (p and p.type == 'ARMATURE' and o.parent_bone):
             return 1
-        if not p and (str(o.parent) not in map(str,obj_list)):
+        if not p and (str(o.parent) not in map(str, obj_list)):
             return 1
         if p and p.__class__ == bpy.types.Bone \
-           and o.__class__ == bpy.types.Bone and o.parent == p:
+                and o.__class__ == bpy.types.Bone and o.parent == p:
             return 2
         # ACHTUNG!!! Be careful: If we have two armatures with the
         # same bones name and object, attached to it,
         # then we can get unexpected results!
         if o.__class__ != bpy.types.Bone and o.parent_type == 'BONE' \
-           and p and o.parent_bone == p.name:
+                and p and o.parent_bone == p.name:
             return 3
         return 0
 
@@ -114,7 +115,7 @@ class Group:
         """
         try:
             if self.object and self.object.__class__ != bpy.types.Bone and \
-            self.object.type == 'ARMATURE':
+                    self.object.type == 'ARMATURE':
                 obj_list += self.object.data.bones
                 for bone in self.object.data.bones:
                     if not bone.parent:
@@ -122,7 +123,7 @@ class Group:
                             gr = self.__class__(bone, self.object)
                         except:
                             print_exc()
-                            return ['ERR_MK_OBJ',]
+                            return ['ERR_MK_OBJ', ]
                         self.children.append(gr)
                         gr.make_hierarchy_from_list(obj_list)
             for obj in obj_list:
@@ -132,61 +133,33 @@ class Group:
                             gr = self.__class__(obj, self.arm_owner)
                         except:
                             print_exc()
-                            return ['ERR_MK_OBJ',]
+                            return ['ERR_MK_OBJ', ]
                     else:
                         try:
                             gr = self.__class__(obj)
                         except:
                             print_exc()
-                            return ['ERR_MK_OBJ',]
+                            return ['ERR_MK_OBJ', ]
                     self.children.append(gr)
                     gr.make_hierarchy_from_list(obj_list)
         except Exception as exc:
-            #print('\n'.join(format_tb(exc.__traceback__)))
             print_exc()
-            return ['ERR_MK_HIERARCHY',]
+            return ['ERR_MK_HIERARCHY', ]
         return []
 
-    def print_hierarchy(self, level = 0):
+    def print_hierarchy(self, level=0):
         """ Debug function to print out hierarchy to console.
 
         @param level: starting indent level.
         """
         print('-' * level, self.object)
         for ch in self.children:
-            ch.print_hierarchy(level+1)
+            ch.print_hierarchy(level + 1)
 
-    def get_tags_egg_str(self, level = 0):
-        """ Create and return <Tag> string from Blender's object
-        Game logic properties.
-
-        @param level: indent level.
-
-        @return: the EGG tags string.
-        """
-        egg_str = ''
-        if self.object:
-            for prop in self.object.game.properties:
-                normalized = prop.name.lower().replace('_', '-')
-
-                if normalized in ('collide', 'objecttype'):
-                    vals = ('  ' * level, prop.name, prop.value)
-                    egg_str += '%s<%s> { %s }\n' % vals
-                elif normalized in ('collide-mask', 'from-collide-mask', 'into-collide-mask', 'bin', 'draw-order', 'occluder', "portal"):
-                    vals = ('  ' * level, prop.name, prop.value)
-                    egg_str += '%s<Scalar> %s { %s }\n' % vals
-                elif normalized == 'file' and self.object.type == 'EMPTY':
-                    vals = ('  ' * level, prop.value)
-                    egg_str += '%s<Instance> { <File> { %s } }\n' % vals
-                else:
-                    vals = ('  ' * level, eggSafeName(prop.name), eggSafeName(prop.value))
-                    egg_str += '%s<Tag> %s { %s }\n' % vals
-        return egg_str
-
-    def get_full_egg_str(self, level = 0):
+    def get_full_egg_str(self, level=0):
         return ''.join(self.get_full_egg_str_arr(level))
 
-    def get_full_egg_str_arr(self,level = 0):
+    def get_full_egg_str_arr(self, level=0):
         """ Create and return representation of the EGG  <Group>
         with hierarchy, started from self.object. It's start point to
         generating EGG structure.
@@ -197,27 +170,67 @@ class Group:
         """
         egg_str = []
         if self.object:
+            print(self.object)
             if self.object.__class__ == bpy.types.Bone:
-                egg_str.append( '%s<Joint> %s {\n' % ('  ' * level, eggSafeName(self.object.yabee_name)) )
-                #self._yabee_object = EGGJointObjectData(self.object, {}, self.arm_owner)
+                egg_str.append('%s<Joint> %s {\n' % ('  ' * level, eggSafeName(self.object.yabee_name)))
             else:
-                egg_str.append( '%s<Group> %s {\n' % ('  ' * level, eggSafeName(self.object.yabee_name)) )
-                egg_str.append( self.get_tags_egg_str(level + 1) )
+                egg_str.append('%s<Group> %s {\n'\
+                               % ('  ' * level, eggSafeName(self.object.yabee_name)))
+                if self.object.ObjectType:
+                    for val in self.object.ObjectType.split(','):
+                        vals = ('  ' * level, val)
+                        egg_str += '%s  <ObjectType> { %s }\n' % vals
+                if self.object.Collide:
+                    vals = ('  ' * level, self.object.Collide)
+                    egg_str += '%s  <Collide> { %s }\n' % vals
+                if self.object.drawOrder:
+                    vals = ('  ' * level, "draw-order", self.object.drawOrder)
+                    egg_str += '%s  <Scalar> %s { %s }\n' % vals
+                if self.object.collideMask:
+                    vals = ('  ' * level, "collide-mask", self.object.collideMask)
+                    egg_str += '%s  <Scalar> %s { %s }\n' % vals
+                if self.object.bin:
+                    vals = ('  ' * level, "bin", self.object.bin)
+                    egg_str += '%s  <Scalar> %s { %s }\n' % vals
+                if self.object.visibility:
+                    vals = ('  ' * level, "visibility", self.object.visibility)
+                    egg_str += '%s  <Scalar> %s { %s }\n' % vals
+                if self.object.decal:
+                    vals = ('  ' * level, "decal", self.object.decal)
+                    egg_str += '%s  <Scalar> %s { %s }\n' % vals
+                if self.object.decalbase:
+                    vals = ('  ' * level, "decalbase", self.object.decalbase)
+                    egg_str += '%s  <Scalar> %s { %s }\n' % vals
+                if self.object.fromCollideMask:
+                    vals = ('  ' * level, "from-collide-mask", self.object.fromCollideMask)
+                    egg_str += '%s  <Scalar> %s { %s }\n' % vals
+                if self.object.intoCollideMask:
+                    vals = ('  ' * level, "into-collide-mask", self.object.intoCollideMask)
+                    egg_str += '%s  <Scalar> %s { %s }\n' % vals
+                if self.object.billboard:
+                    vals = ('  ' * level, self.object.billboard)
+                    egg_str += '%s  <Billboard> { %s }\n' % vals
+                if self.object.DCS:
+                    vals = ('  ' * level, self.object.DCS)
+                    egg_str += '%s  <DCS> { %s }\n' % vals
+                if self.object.Model:
+                    vals = ('  ' * level, self.object.Model)
+                    egg_str += '%s  <Model> { %s }\n' % vals
                 if self.object.type == 'MESH' \
-                   and (self.object.data.shape_keys \
-                        and len(self.object.data.shape_keys.key_blocks) > 1):
-                    egg_str.append( '%s<Dart> { 1 }\n' % ('  ' * (level + 1)) )
+                        and (self.object.data.shape_keys \
+                             and len(self.object.data.shape_keys.key_blocks) > 1):
+                    egg_str.append('%s<Dart> { 1 }\n' % ('  ' * (level + 1)))
                 elif self.object.type == 'ARMATURE':
-                    egg_str.append( '%s<Dart> { 1 }\n' % ('  ' * (level + 1)) )
+                    egg_str.append('%s<Dart> { 1 }\n' % ('  ' * (level + 1)))
             if self._yabee_object:
                 for line in self._yabee_object.get_full_egg_str().splitlines():
-                    egg_str.append( '%s%s\n' % ('  ' * (level + 1), line) )
+                    egg_str.append('%s%s\n' % ('  ' * (level + 1), line))
             for ch in self.children:
-                egg_str.append( ch.get_full_egg_str(level + 1) )
-            egg_str.append( '%s}\n' % ('  ' * level) )
+                egg_str.append(ch.get_full_egg_str(level + 1))
+            egg_str.append('%s}\n' % ('  ' * level))
         else:
             for ch in self.children:
-                egg_str.append( ch.get_full_egg_str(level + 1) )
+                egg_str.append(ch.get_full_egg_str(level + 1))
         return egg_str
 
 
@@ -226,7 +239,7 @@ class EGGArmature(Group):
     bones list as obj_list in constructor.
     """
 
-    def get_full_egg_str(self, vrefs, arm_owner, level = 0):
+    def get_full_egg_str(self, vrefs, arm_owner, level=0):
         """ Create and return string representation of the EGG <Joint>
         with hierachy.
 
@@ -238,11 +251,7 @@ class EGGArmature(Group):
         """
         egg_str = ''
         if self.object:
-            #egg_str += '%s<Joint> %s {\n' % ('  ' * level, eggSafeName(self.object.name))
             egg_str += '%s<Joint> %s {\n' % ('  ' * level, eggSafeName(self.object.yabee_name))
-            # Get vertices reference by Bone name from globlal armature vref
-            #if self.object.name in list(vrefs.keys()):
-            #    vref = vrefs[self.object.name]
             if self.object.yabee_name in list(vrefs.keys()):
                 vref = vrefs[self.object.yabee_name]
             else:
@@ -259,9 +268,9 @@ class EGGArmature(Group):
         return egg_str
 
 
-#-----------------------------------------------------------------------
+# -----------------------------------------------------------------------
 #                           BASE OBJECT
-#-----------------------------------------------------------------------
+# -----------------------------------------------------------------------
 class EGGBaseObjectData:
     """ Base representation of the EGG objects  data
     """
@@ -276,14 +285,14 @@ class EGGBaseObjectData:
     def get_transform_str(self):
         """ Return the EGG string representation of object transforms.
         """
-        tr_str = ['<Transform> {\n  <Matrix4> {\n',]
+        tr_str = ['<Transform> {\n  <Matrix4> {\n', ]
         for y in self.transform_matrix.col:
-            tr_str.append( '    ' )
+            tr_str.append('    ')
             for x in y[:]:
-                #tr_str += [STRF( x ), ' ']
-                tr_str += [str( x ), ' ']
+                # tr_str += [STRF( x ), ' ']
+                tr_str += [str(x), ' ']
             tr_str.append('\n')
-        tr_str.append( '  }\n}\n' )
+        tr_str.append('  }\n}\n')
         return ''.join(tr_str)
 
     def get_full_egg_str(self):
@@ -293,6 +302,7 @@ class EGGBaseObjectData:
 class EGGNurbsCurveObjectData(EGGBaseObjectData):
     """ Representation of the EGG NURBS Curve
     """
+
     def collect_vertices(self):
         vertices = []
         idx = 0
@@ -301,10 +311,9 @@ class EGGNurbsCurveObjectData(EGGBaseObjectData):
                 co = self.obj_ref.matrix_world * vtx.co
                 fixed_co = tuple(map(lambda x: x * co[3], co[:3])) + (co[3],)
                 vertices.append('<Vertex> %i {\n  %s\n}\n' % (idx,
-                                    ' '.join(map(STRF, fixed_co))))
+                                                              ' '.join(map(STRF, fixed_co))))
                 idx += 1
         return vertices
-
 
     def get_vtx_pool_str(self):
         """ Return the vertex pool string in the EGG syntax.
@@ -317,7 +326,6 @@ class EGGNurbsCurveObjectData(EGGBaseObjectData):
                 for line in vtx_str.splitlines():
                     vtx_pool += '  ' + line + '\n'
             vtx_pool += '}\n'
-            #vtx_pool = '<VertexPool> %s {\n %s}\n' % (eggSafeName(self.obj_ref.yabee_name), '\n  '.join(vertices))
         return vtx_pool
 
     def get_curves_str(self):
@@ -332,21 +340,21 @@ class EGGNurbsCurveObjectData(EGGBaseObjectData):
         for spline in self.obj_ref.data.splines:
             if spline.type == 'NURBS':
                 knots_num = spline.point_count_u + spline.order_u
-                knots = [i/(knots_num - 1) for i in range(knots_num)]
+                knots = [i / (knots_num - 1) for i in range(knots_num)]
                 if spline.use_endpoint_u:
                     for i in range(spline.order_u - 1):
                         knots[i] = 0.0
                         knots[-(i + 1)] = 1.0
                     for i in range(knots_num - (spline.order_u * 2) + 2):
-                        knots[i + spline.order_u - 1] = i/(knots_num - (spline.order_u * 2) + 1)
+                        knots[i + spline.order_u - 1] = i / (knots_num - (spline.order_u * 2) + 1)
                 cur_str += '<NURBSCurve> {\n'
                 cur_str += '  <Scalar> subdiv { %i }\n' % (spline.resolution_u * \
-                                                    (spline.point_count_u - 1))
+                                                           (spline.point_count_u - 1))
                 cur_str += '  <Order> { %i }\n' % spline.order_u
                 cur_str += '  <Knots> { %s }\n' % ' '.join(map(str2f, knots))
                 cur_str += '  <VertexRef> {\n    %s\n    <Ref> { %s } \n  }\n' % (
-                        ' '.join([str(i) for i in range(idx, idx + \
-                        spline.point_count_u)]), eggSafeName(self.obj_ref.yabee_name))
+                    ' '.join([str(i) for i in range(idx, idx + \
+                                                    spline.point_count_u)]), eggSafeName(self.obj_ref.yabee_name))
                 cur_str += '}\n'
                 idx += spline.point_count_u
         return cur_str
@@ -366,28 +374,28 @@ class EGGJointObjectData(EGGBaseObjectData):
         self.obj_ref = obj
         self.arm_owner = arm_owner
         if not obj.parent:
-            self.transform_matrix = arm_owner.matrix_world * obj.matrix_local
+            self.transform_matrix = arm_owner.matrix_world @ obj.matrix_local
         else:
-            self.transform_matrix = obj.parent.matrix_local.inverted() * obj.matrix_local
+            self.transform_matrix = obj.parent.matrix_local.inverted() @ obj.matrix_local
         self.vref = vref
 
     def get_vref_str(self):
         """ Convert vertex reference to the EGG string and return it.
         """
-        #print('GET VREF')
+        # print('GET VREF')
         vref_str = ''
         for meshes in self.vref:
             for vpool, data in meshes.items():
                 weightgroups = {}
                 for idx, weight in data:
-                    #wstr = '%s' % STRF(weight)
+                    # wstr = '%s' % STRF(weight)
                     wstr = '%f' % weight
                     if wstr not in list(weightgroups.keys()):
                         weightgroups[wstr] = []
                     weightgroups[wstr].append(idx)
                 for wgrp, idxs in weightgroups.items():
                     vref_str += '<VertexRef> {\n'
-                    vref_str += '  ' + ' '.join(map(str,idxs)) + '\n'
+                    vref_str += '  ' + ' '.join(map(str, idxs)) + '\n'
                     vref_str += '  <Scalar> membership { %s }' % wgrp
                     vref_str += '  <Ref> { %s }\n}\n' % vpool
         return vref_str
@@ -396,23 +404,12 @@ class EGGJointObjectData(EGGBaseObjectData):
         egg_str = ''
         egg_str += self.get_transform_str()
         egg_str += self.get_vref_str()
-        '''
-        for obj in [obj for obj in bpy.context.selected_objects \
-                    if self.obj_ref.yabee_name == obj.parent_bone and self.arm_owner == obj.parent]:
-            gr = Group(None)
-            obj_list = []
-            hierarchy_to_list(obj, obj_list)
-            obj_list = [obj for obj in obj_list if (obj in bpy.context.selected_objects)]
-            gr.make_hierarchy_from_list(obj_list)
-            for line in gr.get_full_egg_str(-1).splitlines():
-                egg_str += line + '\n'
-        '''
-        return  egg_str
+        return egg_str
 
 
-#-----------------------------------------------------------------------
+# -----------------------------------------------------------------------
 #                           MESH OBJECT
-#-----------------------------------------------------------------------
+# -----------------------------------------------------------------------
 class EGGMeshObjectData(EGGBaseObjectData):
     """ EGG data representation of the mesh object
     """
@@ -438,23 +435,17 @@ class EGGMeshObjectData(EGGBaseObjectData):
             if obj.data.materials[f.material_index]:
                 if obj.data.materials[f.material_index].use_nodes:
                     uses_nodes = True
-            for slot in obj.data.materials[f.material_index].texture_slots:
-                if slot and slot.texture_coords == 'ORCO':
-                    need_orco = True
-                    break
-        print("orcocheck",uses_nodes, need_orco)
-        if (need_orco == True) and (uses_nodes == False):
-            print("starting orco calc")
-            self.pre_calc_ORCO()
 
         # Store current active UV name
         self.active_uv = None
-        auv = [uv for uv in obj.data.uv_textures if uv.active]
-        if auv and uses_nodes == False: # if we use nodes we don't want the active-uv name to be empty later on. (we need those to acces from uv-map nodes)
+        # now there is no uv_layers attribute, instead uv_layers
+        auv = [uv for uv in obj.data.uv_layers if uv.active]
+        # if we use nodes we don't want the active-uv name to be empty later on.
+        # (we need those to acces from uv-map nodes)
+        if auv and uses_nodes == False:
             self.active_uv = auv[0].name
 
-
-    #-------------------------------------------------------------------
+    # -------------------------------------------------------------------
     #                           AUXILIARY
 
     def get_smooth_vtx_list(self):
@@ -463,7 +454,7 @@ class EGGMeshObjectData(EGGBaseObjectData):
         shading used normals of vertices. For solid - polygons.
         """
         vtx_list = []
-        for i,f in enumerate(self.obj_ref.data.polygons):
+        for i, f in enumerate(self.obj_ref.data.polygons):
             if f.use_smooth:
                 for v in self.poly_vtx_ref[i]:
                     vtx_list.append(v)
@@ -471,7 +462,7 @@ class EGGMeshObjectData(EGGBaseObjectData):
 
         if self.obj_ref.data.use_auto_smooth:
             sharp_edges = [e.key for e in self.obj_ref.data.edges if e.use_edge_sharp]
-            for i,f in enumerate(self.obj_ref.data.polygons):
+            for i, f in enumerate(self.obj_ref.data.polygons):
                 for e in f.edge_keys:
                     if e in sharp_edges:
                         for ev in e:
@@ -490,8 +481,8 @@ class EGGMeshObjectData(EGGBaseObjectData):
         for uv_layer in self.obj_ref.data.uv_layers:
             data = []
             for uv_data in uv_layer.data:
-                u,v = uv_data.uv.to_2d()
-                data.append((u,v))
+                u, v = uv_data.uv.to_2d()
+                data.append((u, v))
             uv_list.append((uv_layer.name, data))
         return uv_list
 
@@ -514,12 +505,7 @@ class EGGMeshObjectData(EGGBaseObjectData):
         color_vtx_ref = []
         if self.obj_ref.data.vertex_colors.active:
             for col in self.obj_ref.data.vertex_colors.active.data:
-                color_vtx_ref.append(col.color) # We have one color per data color
-            #for fi, face in enumerate(self.obj_ref.data.polygons):
-            #    col = self.obj_ref.data.vertex_colors.active.data[fi]
-            #    col = col.color1[:], col.color2[:], col.color3[:], col.color4[:]
-            #    for vi, v in enumerate(face.vertices):
-            #        color_vtx_ref.append(col[vi])
+                color_vtx_ref.append(col.color)  # We have one color per data color
         return color_vtx_ref
 
     def pre_calc_TBS(self):
@@ -529,9 +515,10 @@ class EGGMeshObjectData(EGGBaseObjectData):
         tangent_layers = []
         for idx, uvl in enumerate(self.obj_ref.data.uv_layers):
             tangents = []
-            self.obj_ref.data.calc_tangents(uvl.name)
+            self.obj_ref.data.calc_tangents(uvmap=uvl.name)
+
             for loop in self.obj_ref.data.loops:
-                tangents.append(loop.tangent[:]+loop.bitangent[:])
+                tangents.append(loop.tangent[:] + loop.bitangent[:])
             tangent_layers.append(tangents)
         return tangent_layers
 
@@ -556,7 +543,7 @@ class EGGMeshObjectData(EGGBaseObjectData):
         inv_dims = [0, 0, 0]
         for i in (0, 1, 2):
             delta = (minmax[1][i] - minmax[0][i])
-            if delta > 0: # Prevent divide by zero
+            if delta > 0:  # Prevent divide by zero
                 inv_dims[i] = 1.0 / delta
 
         data = []
@@ -568,18 +555,18 @@ class EGGMeshObjectData(EGGBaseObjectData):
 
         self.uvs_list.append(('ORCO', data))
 
-    #-------------------------------------------------------------------
+    # -------------------------------------------------------------------
     #                           VERTICES
 
     def collect_vtx_xyz(self, vidx, attributes):
-        """ Add coordinates of the vertex to the vertex attriibutes list
+        """ Add coordinates of the vertex to the vertex attributes list
 
         @param vidx: Blender's internal vertex index.
         @param attributes: list of vertex attributes
 
         @return: list of vertex attributes.
         """
-        co = self.obj_ref.matrix_world * self.obj_ref.data.vertices[vidx].co
+        co = self.obj_ref.matrix_world @ self.obj_ref.data.vertices[vidx].co
         attributes.append('%f %f %f' % co[:])
         return attributes
 
@@ -591,12 +578,13 @@ class EGGMeshObjectData(EGGBaseObjectData):
 
         @return: list of vertex attributes.
         """
-        if ((self.obj_ref.data.shape_keys) and (len(self.obj_ref.data.shape_keys.key_blocks) > 1)):
-            for i in range(1,len(self.obj_ref.data.shape_keys.key_blocks)):
+        if (self.obj_ref.data.shape_keys
+                and (len(self.obj_ref.data.shape_keys.key_blocks) > 1)):
+            for i in range(1, len(self.obj_ref.data.shape_keys.key_blocks)):
                 key = self.obj_ref.data.shape_keys.key_blocks[i]
                 vtx = self.obj_ref.data.vertices[vidx]
-                co = key.data[vidx].co * self.obj_ref.matrix_world - \
-                     vtx.co * self.obj_ref.matrix_world
+                co = key.data[vidx].co @ self.obj_ref.matrix_world - \
+                     vtx.co @ self.obj_ref.matrix_world
                 if co.length > 0.000001:
                     attributes.append('<Dxyz> %s { %f %f %f }\n' % \
                                       (eggSafeName(key.name), co[0], co[1], co[2]))
@@ -612,10 +600,11 @@ class EGGMeshObjectData(EGGBaseObjectData):
         @return: list of vertex attributes.
         """
         if idx in self.smooth_vtx_list:
-            no = self.obj_ref.matrix_world.to_euler().to_matrix() * self.obj_ref.data.vertices[v].normal
-            #no = self.obj_ref.data.vertices[v].normal
-            #no = self.obj_ref.data.loops[idx].normal
+            no = self.obj_ref.matrix_world.to_euler().to_matrix() @ self.obj_ref.data.vertices[v].normal
+            # no = self.obj_ref.data.vertices[v].normal
+            # no = self.obj_ref.data.loops[idx].normal
             attributes.append('<Normal> { %f %f %f }' % no[:])
+
         return attributes
 
     def collect_vtx_normal_from_loop(self, v, idx, attributes):
@@ -628,8 +617,9 @@ class EGGMeshObjectData(EGGBaseObjectData):
         @return: list of vertex attributes.
         """
         if idx in self.smooth_vtx_list:
-            no = self.obj_ref.matrix_world.to_euler().to_matrix() * self.obj_ref.data.loops[self.map_vertex_to_loop[v]].normal
-            attributes.append('<Normal> { %f %f %f }' % no[:])
+            no = self.obj_ref.matrix_world.to_euler().to_matrix() @ self.obj_ref.data.loops[
+                self.map_vertex_to_loop[v]].normal
+            attributes.append('  <Normal> { %f %f %f }' % no[:])
         return attributes
 
     def collect_vtx_rgba(self, vidx, face, attributes):
@@ -637,9 +627,23 @@ class EGGMeshObjectData(EGGBaseObjectData):
             # Don't write out vertex colors unless a material actually uses it.
             if face.material_index < len(self.obj_ref.data.materials):
                 mat = self.obj_ref.data.materials[face.material_index]
-                if FORCE_EXPORT_VERTEX_COLORS or (mat and mat.use_vertex_color_paint):
+                if FORCE_EXPORT_VERTEX_COLORS or mat:
                     col = self.colors_vtx_ref[vidx]
-                    attributes.append('<RGBA> { %f %f %f 1.0 }' % col[:])
+                    attributes.append('  <RGBA> { %f %f %f %f }' % col[:])
+            else:
+                # Write out vertex colors if no material applied
+                col = self.colors_vtx_ref[vidx]
+                attributes.append('  <RGBA> { %f %f %f %f }' % col[:])
+        else:
+            # if material has no texture:
+            for mat in self.obj_ref.data.materials:
+                if not mat:
+                    continue
+                nodeTree = mat.node_tree
+                if nodeTree.nodes:
+                    for pandaShaderNode in nodeTree.links:
+                        if pandaShaderNode.to_node.name == "Material Output":
+                            attributes.append('  <RGBA> { 1 1 1 1 }')
         return attributes
 
     def collect_vtx_uv(self, vidx, ividx, attributes):
@@ -657,7 +661,9 @@ class EGGMeshObjectData(EGGBaseObjectData):
             tbs = ''
             if self.tangent_layers:
                 tbs = '\n    <Tangent> {%f %f %f}\n    <Binormal> {%f %f %f}' % self.tangent_layers[i][ividx]
-            uv_str = '  <UV> %s {\n    %f %f %s\n  }' % (eggSafeName(name), data[ividx][0], data[ividx][1], tbs)
+
+            uv_str = '  <UV> %s {\n    %f %f %s\n  }' % (
+                eggSafeName(name), data[ividx][0], data[ividx][1], tbs)
             attributes.append(uv_str)
 
         return attributes
@@ -669,9 +675,10 @@ class EGGMeshObjectData(EGGBaseObjectData):
         dxyz = self.collect_vtx_dxyz
         rgba = self.collect_vtx_rgba
         uv = self.collect_vtx_uv
+
         if USE_LOOP_NORMALS and self.obj_ref.data.has_custom_normals:
             self.map_vertex_to_loop = {self.obj_ref.data.loops[lidx].vertex_index: lidx
-                for p in self.obj_ref.data.polygons for lidx in p.loop_indices}
+                                       for p in self.obj_ref.data.polygons for lidx in p.loop_indices}
             normal = self.collect_vtx_normal_from_loop
         else:
             normal = self.collect_vtx_normal
@@ -694,8 +701,7 @@ class EGGMeshObjectData(EGGBaseObjectData):
                 idx += 1
         return vertices
 
-
-    #-------------------------------------------------------------------
+    # -------------------------------------------------------------------
     #                           POLYGONS
 
     def collect_poly_tref(self, face, attributes):
@@ -707,23 +713,7 @@ class EGGMeshObjectData(EGGBaseObjectData):
         @return: list of polygon's attributes.
         """
         global USED_TEXTURES, TEXTURE_PROCESSOR
-        '''
-        if TEXTURE_PROCESSOR == 'SIMPLE':
-            if EXPORT_UV_IMAGE_AS_TEXTURE:
-                for uv_tex in self.obj_ref.data.uv_textures:
-                    #if uv_tex.data[face.index].image.source == 'FILE':
-                    tex_name = uv_tex.data[face.index].image.yabee_name
-                    if tex_name in USED_TEXTURES:
-                        attributes.append('<TRef> { %s }' % eggSafeName(tex_name))
-            if face.material_index < len(self.obj_ref.data.materials):
-                mat = self.obj_ref.data.materials[face.material_index]
-                for tex in [tex for tex in mat.texture_slots if tex]:
-                    tex_name = tex.texture.yabee_name
-                    if tex_name in USED_TEXTURES:
-                                attributes.append('<TRef> { %s }' % eggSafeName(tex_name))
-        '''
-        if TEXTURE_PROCESSOR in ('SIMPLE', 'RAW'):
-
+        if TEXTURE_PROCESSOR in 'BAKE':
 
             # Store all texture references here. It is important that this is a list
             # so the texture order is preserved.
@@ -732,99 +722,60 @@ class EGGMeshObjectData(EGGBaseObjectData):
             # Find the material assigned to that polygon:
             # First, check if that polygon has a material at all
             material = None
+            matIsFancyPBRNode = False
             if face.material_index < len(self.obj_ref.data.materials):
                 material = self.obj_ref.data.materials[face.material_index]
-            
-            
-            matIsFancyPBRNode = False
+
             if material:
                 if material.use_nodes:
                     nodeTree = material.node_tree
-                    if nodeTree.nodes.get("Panda3D_RP_Diffuse_Mat"):
+                    if nodeTree.nodes:
                         matIsFancyPBRNode = True
 
-                # Check if the material has per-face textures enabled. If per-face textures
-                # are enabled, the material textures are ignored and only the active
-                # face textures are exported. Otherwise the per-face textures are completely
-                # ignored.
-                if material.use_face_texture:
+                        if matIsFancyPBRNode:
+                            # print(USED_TEXTURES)
+                            # we need to find a couple of textures here
+                            # we do need an empty for specular but it's added somewhere else
+                            nodeNames = {"Base Color": None, "Normal": None}
+                            # let's crawl all links, find the ones connected to the Principled BSDF,
+                            for link in material.node_tree.links:
+                                # if the link connects to the Principled BSDF node
+                                # and it connects to one of our known sockets...
+                                if link.to_node.name == "Principled BSDF":
+                                    if link.to_socket.name in nodeNames.keys():
+                                        textureNode = link.from_node
+                                        if textureNode.name == "Mix":
+                                            print("Detected Mix node.")
+                                            textureNode = link.from_node.inputs[2].links[0].from_node
 
-                    # Check all assigned uv textures of that object
-                    for uv_tex in self.obj_ref.data.uv_textures:
+                                        # we have to find the texture name here.
+                                        nodeNames[link.to_socket.name] = textureNode.name
 
-                        # Check if the polygon is assigned to that uv-texture
-                        facedata = uv_tex.data[face.index]
-                        if facedata.image:
+                            for x in ['Base Color', 'Normal']:
+                                tex = nodeNames[x]
+                                if tex:
+                                    textures.append(tex)
 
-                            # If the polygon is assigned, store a reference to that texture
-                            tex_name = '%s_%s' % (uv_tex.name, facedata.image.yabee_name)
-                            if tex_name in USED_TEXTURES and tex_name not in textures:
-                                textures.append(tex_name)
+                    else:
+                        # The object has no material, that means it will get no textures
+                        print("WARNING: Object", self.obj_ref.name, "has no material assigned!")
 
-                elif matIsFancyPBRNode:
-                    #print(USED_TEXTURES)
-                    #we need to find a couple of textures here
-                    nodeNames={"ColorTex":None, "RoughnessTex":None , "NormalTex":None, "SpecularDummyTex":None} ##we do need an empty for specular but it's added somewhere else
-                    #let's crawl all links, find the ones connected to the PandaPBRNode, find the connected textures, use them.
-                    for link in material.node_tree.links:
-                        if link.to_node.name == "Panda3D_RP_Diffuse_Mat": #if the link connects to the panda3ddiffuse node
-                            if link.to_socket.name in nodeNames.keys():  # and it connects to one of our known sockets...
-                                textureNode = link.from_node
-                                texFilePath = textureNode.image.filepath #we have to find the texture name here.
-                                nodeNames[link.to_socket.name] = textureNode.name
-                                texname = textureNode.name
-                                #orig_tex_names = material.yabee_texture_slots.split(NAME_SEPARATOR)
-                                
-                                #MARK 
-                    #print(nodeNames)
-                    
-                    for x in ["ColorTex","NormalTex","SpecularDummyTex","RoughnessTex"]:
-                        tex = nodeNames[x]
-                        if tex:
-                            textures.append(tex)
-                        else:
-                            pass
-                            textures.append("empty")
-                            #todo: append empty texture for the slot
-                    
-                
-                # Material has no per-face textures enabled
+                    # Store all textures
+                    for tex_name in textures:
+                        if tex_name in USED_TEXTURES:
+                            # Make sure that  we'll have this texture in header
+                            # #todo:add this back once empties are added for PBR nodes
+                            attributes.append('<TRef> { %s }' % eggSafeName(tex_name))
+
                 else:
-
-                    # Look up original texture name before it was copied/renamed
-                    orig_tex_names = material.yabee_texture_slots.split(NAME_SEPARATOR)
-
-                    # Just store all texture slots
-                    for index, texture in enumerate(material.texture_slots):
-
-                        # Skip empty slots
-                        if not texture:
-                            continue
-
-                        tex_name = orig_tex_names[index]
-
-                        if tex_name not in textures:
-                            textures.append(tex_name)
-                            
-
-            else:
-                # The object has no material, that means it will get no textures
-                print("WARNING: Object", self.obj_ref.name, "has no material assigned!")
-
-            # Store all textures
-            for tex_name in textures:
-                if tex_name in USED_TEXTURES: # Make sure that  we'll have this texture in header #todo:add this back once empties are added for PBR nodes
-                    attributes.append('<TRef> { %s }' % eggSafeName(tex_name))
-
-        else:
-            if self.obj_ref.data.uv_textures:
-                for btype, params in BAKE_LAYERS.items():
-                    if len(params) == 2:
-                        params = (params[0], params[0], params[1])
-                    if params[2]:
-                        attributes.append('<TRef> { %s }' \
-                                    % eggSafeName(self.obj_ref.yabee_name \
-                                    + '_' + btype))
+                    if self.obj_ref.data.uv_layers and material.use_nodes:
+                        for btype, params in BAKE_LAYERS.items():
+                            if len(params) == 2:
+                                params = (params[0], params[0], params[1])
+                            if params[2]:
+                                attributes.append('<TRef> { %s }' \
+                                                  % eggSafeName(self.obj_ref.yabee_name \
+                                                                + '_' + btype))
 
         return attributes
 
@@ -851,8 +802,7 @@ class EGGMeshObjectData(EGGBaseObjectData):
 
         @return: list of polygon's attributes.
         """
-        no = self.obj_ref.matrix_world.to_euler().to_matrix() * face.normal
-        #attributes.append('<Normal> {%s %s %s}' % (STRF(no[0]), STRF(no[1]), STRF(no[2])))
+        no = self.obj_ref.matrix_world.to_euler().to_matrix() @ face.normal
         attributes.append('<Normal> {%f %f %f}' % no[:])
         return attributes
 
@@ -861,13 +811,8 @@ class EGGMeshObjectData(EGGBaseObjectData):
             mat = self.obj_ref.data.materials[face.material_index]
             if not mat:
                 return attributes
-            if mat.use_shadeless and not mat.use_vertex_color_paint:
-                # If a shadeless material is applied, write the color to the
-                # polygons...  The .egg loader should automatically convert
-                # this to a per-object color in most cases.  This makes
-                # shadeless materials also work when lighting is disabled.
-                attributes.append('<RGBA> {%f %f %f 1}' % tuple(mat.diffuse_color))
-        return attributes
+            if mat:
+                return attributes
 
     def collect_poly_bface(self, face, attributes):
         """ Add <BFace> to the polygon's attributes list.
@@ -881,7 +826,7 @@ class EGGMeshObjectData(EGGBaseObjectData):
             if not self.obj_ref.data.materials[face.material_index]:
                 return attributes
 
-            if not self.obj_ref.data.materials[face.material_index].game_settings.use_backface_culling:
+            if not self.obj_ref.data.materials[face.material_index].use_backface_culling:
                 attributes.append('<BFace> { 1 }')
         return attributes
 
@@ -893,7 +838,7 @@ class EGGMeshObjectData(EGGBaseObjectData):
 
         @return: list of polygon's attributes.
         """
-        vr = ' '.join(map(str,self.poly_vtx_ref[face.index]))
+        vr = ' '.join(map(str, self.poly_vtx_ref[face.index]))
         attributes.append('<VertexRef> { %s <Ref> { %s }}' % (vr, eggSafeName(self.obj_ref.yabee_name)))
         return attributes
 
@@ -908,17 +853,12 @@ class EGGMeshObjectData(EGGBaseObjectData):
         vertexref = self.collect_poly_vertexref
         polygons = []
         for f in self.obj_ref.data.polygons:
-            #poly = '<Polygon> {\n'
             attributes = []
             tref(f, attributes)
             mref(f, attributes)
             normal(f, attributes)
             rgba(f, attributes)
-            bface(f, attributes)
             vertexref(f, attributes)
-            #for attr in attributes:
-            #    for attr_str in attr.splitlines():
-            #        poly += '  ' + attr_str + '\n'
             poly = '<Polygon> {\n  %s \n}\n' % ('\n  '.join(attributes),)
 
             polygons.append(poly)
@@ -944,22 +884,22 @@ class EGGMeshObjectData(EGGBaseObjectData):
         """ Return full mesh data representation in the EGG string syntax
         """
         return '\n'.join((self.get_transform_str(),
-                        self.get_vtx_pool_str(),
-                        self.get_polygons_str()))
+                          self.get_vtx_pool_str(),
+                          self.get_polygons_str()))
 
 
-#-----------------------------------------------------------------------
+# -----------------------------------------------------------------------
 #                           ACTOR OBJECT
-#-----------------------------------------------------------------------
+# -----------------------------------------------------------------------
 
 class EGGActorObjectData(EGGMeshObjectData):
     """ Representation of the EGG animated object data
     """
 
     def __init__(self, obj):
-        EGGMeshObjectData.__init__(self,obj)
+        EGGMeshObjectData.__init__(self, obj)
         self.joint_vtx_ref = self.pre_convert_joint_vtx_ref()
-        #print(self.joint_vtx_ref)
+        # print(self.joint_vtx_ref)
 
     def pre_convert_joint_vtx_ref(self):
         """ Collect and convert vertices, assigned to the bones
@@ -993,18 +933,12 @@ class EGGActorObjectData(EGGMeshObjectData):
                 j_str += ar.get_full_egg_str(self.joint_vtx_ref, mod.object, -1)
         return j_str
 
-    #def get_full_egg_str(self):
-    #    """ Return string representation of the EGG animated object data.
-    #    """
-    #    return self.get_vtx_pool_str() + '\n' \
-    #            + self.get_polygons_str() + '\n' \
-    #            + self.get_joints_str() + '\n'
-
 
 class EGGAnimJoint(Group):
     """ Representation of the <Joint> animation data. Has the same
     hierarchy as the character's skeleton.
     """
+
     def make_hierarchy_from_list(self, obj_list):
         """ Old <Group> function
         -------------------------------
@@ -1016,19 +950,19 @@ class EGGAnimJoint(Group):
         """
         for obj in obj_list:
             if ((obj.parent == self.object) or
-                ((self.object == None) and
-                 (str(obj.parent) not in map(str,obj_list)) and
-                 (str(obj) not in [str(ch.object) for ch in self.children]))):
+                    ((self.object == None) and
+                     (str(obj.parent) not in map(str, obj_list)) and
+                     (str(obj) not in [str(ch.object) for ch in self.children]))):
                 try:
                     gr = self.__class__(obj)
                 except:
                     print_exc()
-                    return ['ERR_MK_OBJ',]
+                    return ['ERR_MK_OBJ', ]
                 self.children.append(gr)
                 gr.make_hierarchy_from_list(obj_list)
         return []
 
-    def get_full_egg_str(self, anim_info, framerate, level = 0):
+    def get_full_egg_str(self, anim_info, framerate, level=0):
         """ Create and return the string representation of the <Joint>
         animation data, included all joints hierarchy.
         """
@@ -1043,16 +977,16 @@ class EGGAnimJoint(Group):
             egg_str += '%s    <V> {\n' % ('  ' * level)
             for i in range(len(bone_data['r'])):
                 egg_str += '%s      %s %s %s %s %s %s %s %s %s\n' % (
-                                                    '  ' * level,
-                                                    STRF(bone_data['i'][i]),
-                                                    STRF(bone_data['j'][i]),
-                                                    STRF(bone_data['k'][i]),
-                                                    STRF(bone_data['p'][i]),
-                                                    STRF(bone_data['r'][i]),
-                                                    STRF(bone_data['h'][i]),
-                                                    STRF(bone_data['x'][i]),
-                                                    STRF(bone_data['y'][i]),
-                                                    STRF(bone_data['z'][i]))
+                    '  ' * level,
+                    STRF(bone_data['i'][i]),
+                    STRF(bone_data['j'][i]),
+                    STRF(bone_data['k'][i]),
+                    STRF(bone_data['p'][i]),
+                    STRF(bone_data['r'][i]),
+                    STRF(bone_data['h'][i]),
+                    STRF(bone_data['x'][i]),
+                    STRF(bone_data['y'][i]),
+                    STRF(bone_data['z'][i]))
             egg_str += '%s    }\n' % ('  ' * level)
             egg_str += '%s  }\n' % ('  ' * level)
             for ch in self.children:
@@ -1063,7 +997,8 @@ class EGGAnimJoint(Group):
                 egg_str += ch.get_full_egg_str(anim_info, framerate, level + 1)
         return egg_str
 
-class AnimCollector():
+
+class AnimCollector:
     """ Collect an armature and a shapekeys animation data and
     convert it to the EGG string.
     """
@@ -1089,17 +1024,6 @@ class AnimCollector():
         for obj in obj_list:
             if obj.__class__ != bpy.types.Bone:
                 if obj.type == 'MESH':
-                    '''
-                    for mod in obj.modifiers:
-                        if mod:
-                            if mod.type == 'ARMATURE':
-                                self.bone_groups[obj.yabee_name] = EGGAnimJoint(None)
-                                self.bone_groups[obj.yabee_name].make_hierarchy_from_list(mod.object.data.bones)
-                                if obj.yabee_name not in list(self.obj_anim_ref.keys()):
-                                    self.obj_anim_ref[obj.yabee_name] = {}
-                                self.obj_anim_ref[obj.yabee_name]['<skeleton>'] = \
-                                        self.collect_arm_anims(mod.object)
-                    '''
                     if ((obj.data.shape_keys) and (len(obj.data.shape_keys.key_blocks) > 1)):
                         if obj.yabee_name not in list(self.obj_anim_ref.keys()):
                             self.obj_anim_ref[obj.yabee_name] = {}
@@ -1112,7 +1036,8 @@ class AnimCollector():
                     if obj.yabee_name not in list(self.obj_anim_ref.keys()):
                         self.obj_anim_ref[obj.yabee_name] = {}
                     self.obj_anim_ref[obj.yabee_name]['<skeleton>'] = \
-                            self.collect_arm_anims(obj)
+                        self.collect_arm_anims(obj)
+
     def collect_morph_anims(self, obj):
         """ Collect an animation data for the morph target (shapekeys).
 
@@ -1125,7 +1050,7 @@ class AnimCollector():
             for f in range(self.start_f, self.stop_f):
                 bpy.context.scene.frame_current = f
                 bpy.context.scene.frame_set(f)
-                for i in range(1,len(obj.data.shape_keys.key_blocks)):
+                for i in range(1, len(obj.data.shape_keys.key_blocks)):
                     key = obj.data.shape_keys.key_blocks[i]
                     if key.name not in list(keys.keys()):
                         keys[key.name] = []
@@ -1150,18 +1075,18 @@ class AnimCollector():
                     if k not in list(anim_dict[bone.yabee_name].keys()):
                         anim_dict[bone.yabee_name][k] = []
                 if bone.parent:
-                    matrix = bone.parent.matrix.inverted() * bone.matrix
+                    matrix = bone.parent.matrix.inverted() @ bone.matrix
                 else:
-                    matrix = arm.matrix_world * bone.matrix
+                    matrix = arm.matrix_world @ bone.matrix
 
                 i, j, k = matrix.to_scale()
                 anim_dict[bone.yabee_name]['i'].append(i)
                 anim_dict[bone.yabee_name]['j'].append(j)
                 anim_dict[bone.yabee_name]['k'].append(k)
                 p, r, h = matrix.to_euler()
-                anim_dict[bone.yabee_name]['p'].append(p/pi*180)
-                anim_dict[bone.yabee_name]['r'].append(r/pi*180)
-                anim_dict[bone.yabee_name]['h'].append(h/pi*180)
+                anim_dict[bone.yabee_name]['p'].append(p / pi * 180)
+                anim_dict[bone.yabee_name]['r'].append(r / pi * 180)
+                anim_dict[bone.yabee_name]['h'].append(h / pi * 180)
                 x, y, z = matrix.to_translation()
                 anim_dict[bone.yabee_name]['x'].append(x)
                 anim_dict[bone.yabee_name]['y'].append(y)
@@ -1227,9 +1152,10 @@ class AnimCollector():
             egg_str += '}\n'
         return egg_str
 
-#-----------------------------------------------------------------------
+
+# -----------------------------------------------------------------------
 #                     SCENE MATERIALS & TEXTURES
-#-----------------------------------------------------------------------
+# -----------------------------------------------------------------------
 def get_used_materials(objects):
     """ Collect Materials used in the selected object.
     """
@@ -1242,7 +1168,6 @@ def get_used_materials(objects):
                         continue
                     m_list.append(obj.data.materials[f.material_index].yabee_name)
     return set(m_list)
-
 
 
 def get_egg_materials_str(object_names=None):
@@ -1261,187 +1186,125 @@ def get_egg_materials_str(object_names=None):
 
     mat_str = ''
     used_materials = get_used_materials(objects)
+    print('INFO: Used materials: ', used_materials)
+
     containsPBRNodes = False
     for m_idx in used_materials:
         mat = bpy.data.materials[m_idx]
         mat_str += '<Material> %s {\n' % eggSafeName(mat.yabee_name)
-        #MARK
-        
+        # MARK
+
         matIsFancyPBRNode = False
-        matFancyType = 0 #default (diffuse) = 0 ,
-        if mat.use_nodes: 
+        matFancyType = 0
+        nodeTree = None
+        if mat.use_nodes:
             nodeTree = mat.node_tree
-            if nodeTree.nodes.get("Panda3D_RP_Diffuse_Mat"):
+            if nodeTree.nodes:
                 matIsFancyPBRNode = True
                 containsPBRNodes = True
                 matFancyType = 0
-        
-        
+
         if matIsFancyPBRNode:
             if matFancyType == 0:
-                pandaShaderNode = nodeTree.nodes.get("Panda3D_RP_Diffuse_Mat")
-                
-                metallic = 0 
-                roughness = pandaShaderNode.inputs.get("RoughnessVal").default_value
-                ior = pandaShaderNode.inputs.get("IOR").default_value
-                col = list(pandaShaderNode.inputs.get("ColorVal").default_value)
-                base_r = col[0]
-                base_g = col[1]
-                base_b = col[2]
-                
-                normalStrength = pandaShaderNode.inputs.get("NormalStrength").default_value
-                
-                mat_str += '  <Scalar> roughness { %s }\n' % STRF(roughness)
-                mat_str += '  <Scalar> metallic { %s }\n' % STRF(0.0)
-                mat_str += '  <Scalar> ior { %s }\n' % STRF(ior)
+                if nodeTree.links[0].to_node.name == "Principled BSDF":
+                    principled_bsdf = nodeTree.links[0].to_node
 
-                mat_str += '  <Scalar> baser { %s }\n' % STRF(base_r)
-                mat_str += '  <Scalar> baseg { %s }\n' % STRF(base_g)
-                mat_str += '  <Scalar> baseb { %s }\n' % STRF(base_b)
-                #mat_str += '  <Scalar> basea { %s }\n' % STRF(1.0)
-                
-                #("DEFAULT", "EMISSIVE", "CLEARCOAT", "TRANSPARENT","SKIN", "FOLIAGE")
-                shading_model_id = 0
-                mat_str += '  <Scalar> emitr { %s }\n' % STRF(shading_model_id)
-                mat_str += '  <Scalar> emitg { %s }\n' % STRF(normalStrength)
-                mat_str += '  <Scalar> emitb { %s }\n' % STRF(0.0)
-            
-        
-        elif EXPORT_PBS and hasattr(mat, "pbepbs"):
+                    basecol = list(principled_bsdf.inputs["Base Color"].default_value)
+                    metallic = principled_bsdf.inputs["Metallic"].default_value
+                    roughness = principled_bsdf.inputs["Roughness"].default_value
 
-            #The following sticks closely to Panda BAM Exporter's MaterialWriter.
-            material = mat
-            pbepbs = material.pbepbs
-            shading_model_id = (
-                "DEFAULT", "EMISSIVE", "CLEARCOAT", "TRANSPARENT",
-                "SKIN", "FOLIAGE").index(pbepbs.shading_model)
+                    base_r = basecol[0]
+                    base_g = basecol[1]
+                    base_b = basecol[2]
+                    base_a = basecol[3]
 
-            # Emissive color contains:
-            # (shading_model, normal_strength, arbitrary-0, arbitrary-1)
-            # where arbitrary depends on the shading model
+                    mat_str += '  <Scalar> baser { %s }\n' % STRF(base_r)
+                    mat_str += '  <Scalar> baseg { %s }\n' % STRF(base_g)
+                    mat_str += '  <Scalar> baseb { %s }\n' % STRF(base_b)
+                    mat_str += '  <Scalar> basea { %s }\n' % STRF(base_a)
 
-            if pbepbs.shading_model == "EMISSIVE":
-                mat_str += '  <Scalar> roughness { %s }\n' % STRF(1.0)
-                mat_str += '  <Scalar> metallic { %s }\n' % STRF(0.0)
-                mat_str += '  <Scalar> ior { %s }\n' % STRF(1.0)
+                    # ("DEFAULT", "EMISSIVE", "CLEARCOAT", "TRANSPARENT","SKIN", "FOLIAGE")
+                    mat_str += '  <Scalar> roughness { %s }\n' % STRF(roughness)
+                    mat_str += '  <Scalar> metallic { %s }\n' % STRF(metallic)
+                    mat_str += '  <Scalar> local { %s }\n' % STRF(0.0)
 
-                mat_str += '  <Scalar> baser { %s }\n' % STRF(material.diffuse_color[0] * pbepbs.emissive_factor)
-                mat_str += '  <Scalar> baseg { %s }\n' % STRF(material.diffuse_color[1] * pbepbs.emissive_factor)
-                mat_str += '  <Scalar> baseb { %s }\n' % STRF(material.diffuse_color[2] * pbepbs.emissive_factor)
-                #mat_str += '  <Scalar> basea { %s }\n' % STRF(1.0)
+                elif nodeTree.links[0].to_node.name == 'Material Output':
+                    print("INFO: {} is using for!".format(nodeTree.links[0].to_node.name)),
+                    objects = bpy.context.selected_objects
+                    for node in bpy.data.materials[0].node_tree.nodes:
+                        if node.name == "Principled BSDF":
+                            principled_bsdf = node
+                            basecol = list(principled_bsdf.inputs["Base Color"].default_value)
+                            metallic = principled_bsdf.inputs["Metallic"].default_value
+                            roughness = principled_bsdf.inputs["Roughness"].default_value
 
-                mat_str += '  <Scalar> emitr { %s }\n' % STRF(shading_model_id)
-                mat_str += '  <Scalar> emitg { %s }\n' % STRF(0.0)
-                mat_str += '  <Scalar> emitb { %s }\n' % STRF(0.0)
-            else:
-                mat_str += '  <Scalar> baser { %s }\n' % STRF(material.diffuse_color[0])
-                mat_str += '  <Scalar> baseg { %s }\n' % STRF(material.diffuse_color[1])
-                mat_str += '  <Scalar> baseb { %s }\n' % STRF(material.diffuse_color[2])
-                #mat_str += '  <Scalar> basea { %s }\n' % STRF(1.0)
+                            base_r = basecol[0]
+                            base_g = basecol[1]
+                            base_b = basecol[2]
+                            base_a = basecol[3]
 
-                if pbepbs.shading_model == "CLEARCOAT" or (pbepbs.metallic and
-                        pbepbs.shading_model != "SKIN"):
-                    mat_str += '  <Scalar> metallic { %s }\n' % STRF(1.0)
-                else:
-                    mat_str += '  <Scalar> metallic { %s }\n' % STRF(0.0)
+                            mat_str += '  <Scalar> baser { %s }\n' % STRF(base_r)
+                            mat_str += '  <Scalar> baseg { %s }\n' % STRF(base_g)
+                            mat_str += '  <Scalar> baseb { %s }\n' % STRF(base_b)
+                            mat_str += '  <Scalar> basea { %s }\n' % STRF(base_a)
 
-                mat_str += '  <Scalar> roughness { %s }\n' % STRF(pbepbs.roughness)
-                mat_str += '  <Scalar> ior { %s }\n' % STRF(pbepbs.ior)
+                            # ("DEFAULT", "EMISSIVE", "CLEARCOAT", "TRANSPARENT","SKIN", "FOLIAGE")
+                            mat_str += '  <Scalar> roughness { %s }\n' % STRF(roughness)
+                            mat_str += '  <Scalar> metallic { %s }\n' % STRF(metallic)
+                            mat_str += '  <Scalar> local { %s }\n' % STRF(0.0)
 
-                if pbepbs.shading_model in ("DEFAULT", "CLEARCOAT", "SKIN"):
-                    arbitrary0, arbitrary1 = 0, 0
-                elif pbepbs.shading_model == "FOLIAGE":
-                    arbitrary0, arbitrary1 = pbepbs.translucency, 0
-                elif pbepbs.shading_model == "TRANSPARENT":
-                    arbitrary0, arbitrary1 = material.alpha, 0
+        if matIsFancyPBRNode is False:
+            print("INFO: Non-Shader Mode is using for!")
+            if matFancyType == 0:
+                for m_val in used_materials:
+                    mat = bpy.data.materials[m_val]
+                    if mat.use_nodes is False:
+                        color = mat.diffuse_color
+                        metallic = 0
+                        basecol = list(color)
+                        base_r = basecol[0]
+                        base_g = basecol[1]
+                        base_b = basecol[2]
+                        # diff_a = diffcol[3]
 
-                mat_str += '  <Scalar> emitr { %s }\n' % STRF(shading_model_id)
-                mat_str += '  <Scalar> emitg { %s }\n' % STRF(pbepbs.normal_strength)
-                mat_str += '  <Scalar> emitb { %s }\n' % STRF(arbitrary0)
-                # arbitrary1 is not used as of now.
+                        mat_str += '  <Scalar> baser { %s }\n' % STRF(base_r)
+                        mat_str += '  <Scalar> baseg { %s }\n' % STRF(base_g)
+                        mat_str += '  <Scalar> baseb { %s }\n' % STRF(base_b)
+                        # mat_str += '  <Scalar> basea { %s }\n' % STRF(base_a)
 
-        else:
-            if not mat.use_shadeless:
-                if mat.use_vertex_color_paint:
-                    # Not writing a diffuse makes Panda take the diffuse color
-                    # from the vertex colors, as with this option in Blender.
-                    # (This sadly doesn't work in combination with 'emit'.)
-                    pass
-                elif TEXTURE_PROCESSOR in ('SIMPLE', 'RAW'):
-                    mat_str += '  <Scalar> diffr { %s }\n' % STRF(mat.diffuse_color[0] * mat.diffuse_intensity)
-                    mat_str += '  <Scalar> diffg { %s }\n' % STRF(mat.diffuse_color[1] * mat.diffuse_intensity)
-                    mat_str += '  <Scalar> diffb { %s }\n' % STRF(mat.diffuse_color[2] * mat.diffuse_intensity)
-                    if mat.alpha != 1.0:
-                        mat_str += '  <Scalar> diffa { %s }\n' % STRF(mat.alpha)
-                elif TEXTURE_PROCESSOR == 'BAKE':
-                    mat_str += '  <Scalar> diffr { 1.0 }\n'
-                    mat_str += '  <Scalar> diffg { 1.0 }\n'
-                    mat_str += '  <Scalar> diffb { 1.0 }\n'
+                        # ("DEFAULT", "EMISSIVE", "CLEARCOAT", "TRANSPARENT","SKIN", "FOLIAGE")
+                        mat_str += '  <Scalar> roughness { %s }\n' % STRF(mat.roughness)
+                        mat_str += '  <Scalar> metallic { %s }\n' % STRF(mat.metallic)
+                        mat_str += '  <Scalar> local { %s }\n' % STRF(0.0)
 
-                mat_str += '  <Scalar> specr { %s }\n' % STRF(mat.specular_color[0] * mat.specular_intensity)
-                mat_str += '  <Scalar> specg { %s }\n' % STRF(mat.specular_color[1] * mat.specular_intensity)
-                mat_str += '  <Scalar> specb { %s }\n' % STRF(mat.specular_color[2] * mat.specular_intensity)
-                if mat.specular_alpha != 1.0:
-                    mat_str += '  <Scalar> speca { %s }\n' % STRF(mat.specular_alpha)
-                mat_str += '  <Scalar> shininess { %s }\n' % (mat.specular_hardness / 512 * 128)
-                mat_str += '  <Scalar> ambr { %s }\n' % STRF(mat.ambient)
-                mat_str += '  <Scalar> ambg { %s }\n' % STRF(mat.ambient)
-                mat_str += '  <Scalar> ambb { %s }\n' % STRF(mat.ambient)
-                mat_str += '  <Scalar> emitr { %s }\n' % STRF(mat.diffuse_color[0] * mat.emit)
-                mat_str += '  <Scalar> emitg { %s }\n' % STRF(mat.diffuse_color[1] * mat.emit)
-                mat_str += '  <Scalar> emitb { %s }\n' % STRF(mat.diffuse_color[2] * mat.emit)
-            else:
-                # In Blender's 'Shadeless' mode, all material attributes and
-                # lighting are disabled and only the diffuse color is used.
-                # .egg doesn't have a notion of a 'Shadeless' material, but we
-                # can emulate it with a material that only has an 'emit' color.
-                if mat.use_vertex_color_paint:
-                    # ...except Panda doesn't support assigning the vertex colors
-                    # to the 'emit' channel of the material.  Ugh!  Just write
-                    # an empty material until this is supported in Panda.
-                    pass
-                else:
-                    mat_str += '  <Scalar> diffr { 0 }\n'
-                    mat_str += '  <Scalar> diffg { 0 }\n'
-                    mat_str += '  <Scalar> diffb { 0 }\n'
-                    mat_str += '  <Scalar> ambr { 0 }\n'
-                    mat_str += '  <Scalar> ambg { 0 }\n'
-                    mat_str += '  <Scalar> ambb { 0 }\n'
-                    mat_str += '  <Scalar> emitr { %s }\n' % STRF(mat.diffuse_color[0])
-                    mat_str += '  <Scalar> emitg { %s }\n' % STRF(mat.diffuse_color[1])
-                    mat_str += '  <Scalar> emitb { %s }\n' % STRF(mat.diffuse_color[2])
+        if TEXTURE_PROCESSOR == 'BAKE' and mat.use_nodes:
+            mat_str += '  <Scalar> diffr { 1.0 }\n'
+            mat_str += '  <Scalar> diffg { 1.0 }\n'
+            mat_str += '  <Scalar> diffb { 1.0 }\n'
 
         mat_str += '}\n\n'
-    used_textures = {}
-    
-    if containsPBRNodes:
-        print("collecting PBR textures")
-        pbrtex = PbrTextures(objects,
-                            EXPORT_UV_IMAGE_AS_TEXTURE,
-                            COPY_TEX_FILES,
-                            FILE_PATH, TEX_PATH)
-        used_textures.update(pbrtex.get_used_textures()) 
-    
-    elif TEXTURE_PROCESSOR == 'SIMPLE':
-        st = SimpleTextures(objects,
-                            EXPORT_UV_IMAGE_AS_TEXTURE,
-                            COPY_TEX_FILES,
-                            FILE_PATH, TEX_PATH)
-        used_textures.update(st.get_used_textures())
-    elif TEXTURE_PROCESSOR == 'RAW':
-        rt = RawTextures(objects,
-                         EXPORT_UV_IMAGE_AS_TEXTURE,
-                         COPY_TEX_FILES,
-                         FILE_PATH, TEX_PATH)
-        used_textures.update(rt.get_used_textures())
 
-    if TEXTURE_PROCESSOR != 'RAW':
+    used_textures = {}
+
+    if containsPBRNodes:
+        print("Found Panda3D compatible Principled BSDF shader. Collecting PBR textures")
+        pbrtex = PbrTextures(objects,
+                             EXPORT_UV_IMAGE_AS_TEXTURE,
+                             COPY_TEX_FILES,
+                             FILE_PATH, TEX_PATH)
+        used_textures.update(pbrtex.get_used_textures())
+
+    else:
+        print("Panda3D compatible Principled BSDF shader not found, See Manual to create it first...")
+
+    """if TEXTURE_PROCESSOR == 'BAKE':
         tb = TextureBaker(objects, FILE_PATH, TEX_PATH)
-        used_textures.update(tb.bake(BAKE_LAYERS))
+        used_textures.update(tb.bake(BAKE_LAYERS))"""
 
     for name, params in used_textures.items():
         mat_str += '<Texture> %s {\n' % eggSafeName(name)
         mat_str += '  "' + convertFileNameToPanda(params['path']) + '"\n'
+
         for scalar in params['scalars']:
             mat_str += ('  <Scalar> %s { %s }\n' % scalar)
 
@@ -1455,10 +1318,10 @@ def get_egg_materials_str(object_names=None):
     return mat_str, used_materials, used_textures
 
 
-#-----------------------------------------------------------------------
+# -----------------------------------------------------------------------
 #                   Preparing & auxiliary functions
-#-----------------------------------------------------------------------
-def hierarchy_to_list(obj, list, base_filter = None):
+# -----------------------------------------------------------------------
+def hierarchy_to_list(obj, list, base_filter=None):
     if base_filter:
         if obj._yabee_object.__class__ == base_filter:
             list.append(obj)
@@ -1486,14 +1349,14 @@ def merge_objects():
         if not to_join:
             selection.append(obj)
     for objects in join_to_arm.values():
-        bpy.ops.object.select_all(action = 'DESELECT')
+        bpy.ops.object.select_all(action='DESELECT')
         for obj in objects:
             obj.select = True
         if len(bpy.context.selected_objects[:]) > 1:
             bpy.context.scene.objects.active = bpy.context.selected_objects[0]
             bpy.ops.object.join()
         selection += bpy.context.selected_objects[:]
-    bpy.ops.object.select_all(action = 'DESELECT')
+    bpy.ops.object.select_all(action='DESELECT')
     for obj in selection:
         obj.select = True
 
@@ -1503,17 +1366,17 @@ def parented_to_armatured():
     """
     arm_objects = []
     old_selection = bpy.context.selected_objects[:]
-    bpy.ops.object.select_all(action = 'DESELECT')
+    bpy.ops.object.select_all(action='DESELECT')
     for obj in bpy.context.scene.objects:
         if obj.type == 'MESH' \
-           and obj.parent \
-           and obj.parent.type == 'ARMATURE' \
-           and obj.parent_bone:
-            bpy.ops.object.select_all(action = 'DESELECT')
+                and obj.parent \
+                and obj.parent.type == 'ARMATURE' \
+                and obj.parent_bone:
+            bpy.ops.object.select_all(action='DESELECT')
             obj.select = True
             arm = obj.parent
             bone = obj.parent_bone
-            bpy.ops.object.select_hierarchy(direction = 'CHILD', extend = True)
+            bpy.ops.object.select_hierarchy(direction='CHILD', extend=True)
             has_selected = [obj for obj \
                             in bpy.context.selected_objects if \
                             obj in old_selection]
@@ -1524,14 +1387,15 @@ def parented_to_armatured():
         modifiers = [mod.type for mod in obj.modifiers]
         if 'ARMATURE' not in modifiers:
             obj.vertex_groups.new(bone)
-            obj.modifiers.new(type = 'ARMATURE', name = 'PtA')
+            obj.modifiers.new(type='ARMATURE', name='PtA')
             obj.modifiers['PtA'].object = arm
             idxs = [vtx.index for vtx in obj.data.vertices]
-            obj.vertex_groups[bone].add(index = idxs, weight = 1.0, type = 'ADD')
+            obj.vertex_groups[bone].add(index=idxs, weight=1.0, type='ADD')
             obj.matrix_local = obj.matrix_parent_inverse * obj.matrix_world
             obj.parent = None
     for obj in old_selection:
         obj.select = True
+
 
 def reparenting_to_armature(obj_list):
     for obj in obj_list:
@@ -1543,50 +1407,54 @@ def reparenting_to_armature(obj_list):
                     obj.parent = mod.object
                     obj.matrix_world = m
 
+
 def apply_modifiers(obj_list=None):
     if not obj_list:
         obj_list = bpy.context.selected_objects
     for obj in obj_list:
         for mod in obj.modifiers:
             if mod and mod.type != 'ARMATURE' and mod.show_viewport:
-                bpy.context.scene.objects.active = obj
+                obj = bpy.context.window.scene.objects[0]
+                bpy.context.view_layer.objects.active = obj
                 try:
-                    bpy.ops.object.modifier_apply(modifier = mod.name)
+                    bpy.ops.object.modifier_apply(modifier=mod.name)
+                    print('INFO: Applying modifier', mod.name)
                 except:
-                    print('WARNING: can\'t apply modifier', mod.name)
+                    print('WARNING: Can\'t apply modifier', mod.name)
 
 
 def generate_shadow_uvs():
     auvs = {}
     for obj in [obj for obj in bpy.context.selected_objects if obj.type == 'MESH']:
-        auvs[obj.name] = obj.data.uv_textures.active
-        if 'yabee_shadow' not in obj.data.uv_textures.keys():
-            obj.data.uv_textures.new('yabee_shadow')
-        #else:
-        #    obj.data.uv_textures.active = obj.data.uv_textures['yabee_shadow']
+        auvs[obj.name] = obj.data.uv_layers.active
+        if 'yabee_shadow' not in obj.data.uv_layers.keys():
+            obj.data.uv_layers.new('yabee_shadow')
+        # else:
         #    obj.data.uv_layers.active = obj.data.uv_layers['yabee_shadow']
-    #bpy.ops.object.mode_set.poll()
-    obj.data.uv_textures.active = obj.data.uv_textures['yabee_shadow']
+        #    obj.data.uv_layers.active = obj.data.uv_layers['yabee_shadow']
+    # bpy.ops.object.mode_set.poll()
+    obj.data.uv_layers.active = obj.data.uv_layers['yabee_shadow']
     obj.data.update()
-    bpy.ops.uv.smart_project(angle_limit = 66, island_margin = 0.03)
+    bpy.ops.uv.smart_project(angle_limit=66, island_margin=0.03)
     for obj in [obj for obj in bpy.context.selected_objects if obj.type == 'MESH']:
-        obj.data.uv_textures.active = auvs[obj.name]
+        obj.data.uv_layers.active = auvs[obj.name]
         obj.data.update()
     bpy.context.scene.update()
 
-#-----------------------------------------------------------------------
+
+# -----------------------------------------------------------------------
 #                           WRITE OUT
-#-----------------------------------------------------------------------
+# -----------------------------------------------------------------------
 def write_out(fname, anims, from_actions, uv_img_as_tex, sep_anim, a_only,
               copy_tex, t_path, tbs, tex_processor, b_layers,
               m_actor, apply_m, pview, loop_normals, export_pbs, force_export_vertex_colors, objects=None):
     global FILE_PATH, ANIMATIONS, ANIMS_FROM_ACTIONS, EXPORT_UV_IMAGE_AS_TEXTURE, \
-           COPY_TEX_FILES, TEX_PATH, SEPARATE_ANIM_FILE, ANIM_ONLY, \
-           STRF, CALC_TBS, TEXTURE_PROCESSOR, BAKE_LAYERS, \
-           MERGE_ACTOR_MESH, APPLY_MOD, PVIEW, USED_MATERIALS, USED_TEXTURES, \
-           USE_LOOP_NORMALS, EXPORT_PBS, FORCE_EXPORT_VERTEX_COLORS
-    imp.reload(sys.modules[lib_name + '.texture_processor'])
-    imp.reload(sys.modules[lib_name + '.utils'])
+        COPY_TEX_FILES, TEX_PATH, SEPARATE_ANIM_FILE, ANIM_ONLY, \
+        STRF, CALC_TBS, TEXTURE_PROCESSOR, BAKE_LAYERS, \
+        MERGE_ACTOR_MESH, APPLY_MOD, PVIEW, USED_MATERIALS, USED_TEXTURES, \
+        USE_LOOP_NORMALS, EXPORT_PBS, FORCE_EXPORT_VERTEX_COLORS
+    importlib.reload(sys.modules[lib_name + '.texture_processor'])
+    importlib.reload(sys.modules[lib_name + '.utils'])
     errors = []
     # === prepare to write ===
     FILE_PATH = fname
@@ -1607,13 +1475,15 @@ def write_out(fname, anims, from_actions, uv_img_as_tex, sep_anim, a_only,
     EXPORT_PBS = export_pbs
     FORCE_EXPORT_VERTEX_COLORS = force_export_vertex_colors
     s_acc = '%.6f'
+
     def str_f(x):
         return s_acc % x
+
     STRF = str_f
     # Prepare copy of the scene.
     # Sync objects names with custom property "yabee_name"
     # to be able to get basic object name in the copy of the scene.
-    #selected_obj = [obj.name for obj in bpy.context.selected_objects if obj.type != 'ARMATURE']
+    # selected_obj = [obj.name for obj in bpy.context.selected_objects if obj.type != 'ARMATURE']
     selected_obj = objects
     if not selected_obj:
         selected_obj = [obj.name for obj in bpy.context.selected_objects]
@@ -1623,13 +1493,19 @@ def write_out(fname, anims, from_actions, uv_img_as_tex, sep_anim, a_only,
                  bpy.data.curves, bpy.data.shape_keys, bpy.data.images):
         for obj in item:
             obj.yabee_name = obj.name
-    for obj in bpy.data.materials:
-        obj.yabee_name = obj.name
-        ts_names = []
-        for tex in obj.texture_slots.values():
-            ts_names.append(tex and tex.name or "")
-        tsmap = NAME_SEPARATOR.join(ts_names)
-        obj.yabee_texture_slots = tsmap
+
+    # Looping the node tree to get texture and its name
+    for mat in bpy.data.materials:
+        mat.yabee_name = mat.name
+        ms_names = []
+        for obj in bpy.data.objects:
+            for mat_slot in obj.material_slots:
+                if mat_slot.material:
+                    if mat_slot.material.node_tree:
+                        for tex in mat_slot.material.node_tree.nodes:
+                            if tex.type == 'TEX_IMAGE':
+                                ms_names.append(tex.image and tex.image.name or "")
+
     for arm in bpy.data.armatures:
         arm.yabee_name = arm.name
         for bone in arm.bones:
@@ -1642,21 +1518,24 @@ def write_out(fname, anims, from_actions, uv_img_as_tex, sep_anim, a_only,
     old_data = {}
     for d in (bpy.data.materials, bpy.data.objects, bpy.data.textures,
               bpy.data.armatures, bpy.data.actions, bpy.data.brushes,
-              bpy.data.cameras, bpy.data.curves, bpy.data.groups,
-              bpy.data.images, bpy.data.lamps, bpy.data.meshes,
+              bpy.data.cameras, bpy.data.curves, bpy.data.collections,
+              bpy.data.images, bpy.data.lights, bpy.data.meshes,
               bpy.data.metaballs, bpy.data.movieclips,
               bpy.data.node_groups, bpy.data.particles, bpy.data.screens,
               bpy.data.shape_keys, bpy.data.sounds,
               bpy.data.speakers, bpy.data.texts, bpy.data.window_managers,
-              bpy.data.worlds, bpy.data.grease_pencil):
+              bpy.data.worlds, bpy.data.grease_pencils):
         old_data[d] = d[:]
 
-    if USE_LOOP_NORMALS:
-        #even obj.data.copy() will not contain loop normals
-        precopy_obj_list = [obj for obj in bpy.context.scene.objects
-                    if obj.yabee_name in selected_obj]
+    # we need this?
+    precopy_obj_list = None
 
-    bpy.ops.scene.new(type = 'FULL_COPY')
+    if USE_LOOP_NORMALS:
+        # even obj.data.copy() will not contain loop normals
+        precopy_obj_list = [obj for obj in bpy.context.scene.objects
+                            if obj.yabee_name in selected_obj]
+
+    bpy.ops.scene.new(type='FULL_COPY')
     try:
         obj_list = [obj for obj in bpy.context.scene.objects
                     if obj.yabee_name in selected_obj]
@@ -1664,12 +1543,13 @@ def write_out(fname, anims, from_actions, uv_img_as_tex, sep_anim, a_only,
             for old, new in zip(precopy_obj_list, obj_list):
                 if old.type != "MESH":
                     continue
-                print("{} has custom normals!".format(old.name) if old.data.has_custom_normals else "{} has no custom normals.".format(old.name))
+                print("{} has custom normals!".format(
+                    old.name) if old.data.has_custom_normals else "{} has no custom normals.".format(old.name))
                 bpy.context.scene.objects.active = new
                 bpy.ops.object.modifier_add(type='DATA_TRANSFER')
                 bpy.context.object.modifiers["DataTransfer"].object = old
                 bpy.context.object.modifiers["DataTransfer"].use_loop_data = True
-                #bpy.context.object.modifiers["DataTransfer"].loop_mapping = 'POLYINTERP_LNORPROJ'
+                # bpy.context.object.modifiers["DataTransfer"].loop_mapping = 'POLYINTERP_LNORPROJ'
                 bpy.context.object.modifiers["DataTransfer"].loop_mapping = 'TOPOLOGY'
                 bpy.context.object.modifiers["DataTransfer"].data_types_loops = {'CUSTOM_NORMAL'}
                 bpy.ops.object.modifier_apply(apply_as='DATA', modifier="DataTransfer")
@@ -1686,13 +1566,13 @@ def write_out(fname, anims, from_actions, uv_img_as_tex, sep_anim, a_only,
                         obj.modifiers.new('triangulate_for_TBS', 'TRIANGULATE')
                         print('WARNING:TBS: Triangulate %s to avoid non tris/quads polygons' % obj.yabee_name)
                         bpy.context.scene.objects.active = obj
-                        bpy.ops.object.modifier_apply(modifier = 'triangulate_for_TBS')
+                        bpy.ops.object.modifier_apply(modifier='triangulate_for_TBS')
                         break
         if APPLY_MOD:
             apply_modifiers(obj_list)
         reparenting_to_armature(obj_list)
-        #parented_to_armatured()
-        #if MERGE_ACTOR_MESH:
+        # parented_to_armatured()
+        # if MERGE_ACTOR_MESH:
         #    merge_objects()
         if bpy.ops.object.mode_set.poll():
             bpy.ops.object.mode_set(mode='OBJECT')
@@ -1705,22 +1585,21 @@ def write_out(fname, anims, from_actions, uv_img_as_tex, sep_anim, a_only,
         for obj in bpy.context.scene.objects:
             if obj.yabee_name in selected_obj:
                 for mod in obj.modifiers:
-                    if mod and mod.type == 'ARMATURE' \
-                       and mod.object not in incl_arm \
-                       and mod.object not in obj_list:
+                    if (mod and mod.type == 'ARMATURE'
+                            and mod.object not in incl_arm
+                            and mod.object not in obj_list):
                         incl_arm.append(mod.object)
-                if obj.parent and obj.parent_type == 'BONE' \
-                   and obj.parent not in incl_arm \
-                   and obj.parent not in obj_list:
+                if (obj.parent and obj.parent_type == 'BONE'
+                        and obj.parent not in incl_arm
+                        and obj.parent not in obj_list):
                     incl_arm.append(obj.parent)
-        #incl_arm = list(incl_arm)[:]
-        #print(incl_arm)
         obj_list += incl_arm
+        # print("DEBUG: ", obj_list)
         print('Objects for export:', [obj.yabee_name for obj in obj_list])
 
         errors += gr.make_hierarchy_from_list(obj_list)
         if not errors:
-            #gr.print_hierarchy()
+            # gr.print_hierarchy()
             gr.update_joints_data()
 
             fdir, fname = os.path.split(os.path.abspath(FILE_PATH))
@@ -1774,7 +1653,7 @@ def write_out(fname, anims, from_actions, uv_img_as_tex, sep_anim, a_only,
                         a_file.close()
                         fpa.append(a_path)
 
-            if ((not ANIM_ONLY) or (not SEPARATE_ANIM_FILE)):
+            if not ANIM_ONLY or not SEPARATE_ANIM_FILE:
                 file.close()
 
             if CALC_TBS == 'PANDA':
@@ -1792,7 +1671,7 @@ def write_out(fname, anims, from_actions, uv_img_as_tex, sep_anim, a_only,
                     print('ERROR: Can\'t execute pview')
     except Exception as exc:
         errors.append('ERR_UNEXPECTED')
-        #print('\n'.join(format_tb(exc.__traceback__)))
+        # print('\n'.join(format_tb(exc.__traceback__)))
         print_exc()
     # Clearing the scene.
     # (!) Possible Incomplete.
@@ -1804,26 +1683,24 @@ def write_out(fname, anims, from_actions, uv_img_as_tex, sep_anim, a_only,
     for d in old_data:
         for obj in d:
             if obj not in old_data[d]:
-                #print("{} has {} users. Proceeding to clear.".format(obj.name, obj.users))
+                # print("{} has {} users. Proceeding to clear.".format(obj.name, obj.users))
                 obj.user_clear()
                 try:
                     d.remove(obj, do_unlink=True)
                 except:
-                    print ('WARNING: Can\'t delete', obj, 'from', d)
+                    print('WARNING: Can\'t delete', obj, 'from', d)
     return errors
 
+
 def write_out_test(fname, anims, uv_img_as_tex, sep_anim, a_only, copy_tex,
-              t_path, tbs, tex_processor, b_layers,
-              m_actor, apply_m, pview):
-    #return write_out(fname, anims, uv_img_as_tex, sep_anim, a_only, copy_tex,
-    #          t_path, tbs, tex_processor, b_layers,
-    #          m_actor, apply_m, pview)
+                   t_path, tbs, tex_processor, b_layers,
+                   m_actor, apply_m, pview):
     import profile
     import pstats
     wo = "write_out('%s', %s, %s, %s, %s, '%s', %s, '%s', '%s', %s, %s, %s, %s)" % \
-            (fname, anims, uv_img_as_tex, sep_anim, a_only, copy_tex,
-              t_path, tbs, tex_processor, b_layers,
-              m_actor, apply_m, pview)
+         (fname, anims, uv_img_as_tex, sep_anim, a_only, copy_tex,
+          t_path, tbs, tex_processor, b_layers,
+          m_actor, apply_m, pview)
     wo = wo.replace('\\', '\\\\')
     profile.runctx(wo, globals(), {}, 'main_prof')
     stats = pstats.Stats('main_prof')

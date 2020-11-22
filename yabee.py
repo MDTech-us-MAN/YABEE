@@ -1,11 +1,15 @@
-""" YABEE rev 12.0
+""" YABEE
 """
+import bpy
+import os
+import sys
+
 # -------------- Change this to setup parameters -----------------------
 #: file name to write
 FILE_PATH = './exp_test/test.egg'
 
 #: { 'animation_name' : (start_frame, end_frame, frame_rate) }
-ANIMATIONS = {'anim1':(0,10,5),
+ANIMATIONS = {'anim1': (0, 10, 5),
               }
 ANIMS_FROM_ACTIONS = False
 
@@ -48,17 +52,14 @@ CALC_TBS = 'PANDA'
 # Also diffuse color of the material would set to (1,1,1) in the
 # 'BAKE' mode
 TEXTURE_PROCESSOR = 'BAKE'
-#TEXTURE_PROCESSOR = 'SIMPLE'
 
 # type: (size, do_bake)
-BAKE_LAYERS = {'diffuse':(512, True),
-               'normal':(512, True),
-               'gloss': (512, True),    # specular
-               'glow': (512, False)      # emission
+BAKE_LAYERS = {'diffuse': (512, True),
+               'normal': (512, True),
+               'gloss': (512, True),  # specular
+               'glow': (512, False)  # emission
                }
 # ----------------------------------------------------------------------
-
-import bpy, os, sys
 
 
 if __name__ == '__main__':
@@ -75,23 +76,25 @@ if __name__ == '__main__':
     except:
         print('Error while trying to add a paths in the sys.path')
 
-    import io_scene_egg.yabee_libs.egg_writer
-    #from io_scene_egg.yabee_libs import egg_writer
-    print('RELOADING MODULES')
-    import imp
-    imp.reload(io_scene_egg.yabee_libs.egg_writer)
-    egg_writer = io_scene_egg.yabee_libs.egg_writer
+    import yabee_libs.egg_writer
 
-    egg_write.write_out(FILE_PATH,
-                        ANIMATIONS, ANIMS_FROM_ACTIONS,
-                        EXPORT_UV_IMAGE_AS_TEXTURE,
-                        SEPARATE_ANIM_FILE,
-                        ANIM_ONLY,
-                        COPY_TEX_FILES,
-                        TEX_PATH,
-                        CALC_TBS,
-                        TEXTURE_PROCESSOR,
-                        BAKE_LAYERS,
-                        True, True, True,  # MERGE_ACTOR_MESH, APPLY_MOD, PVIEW
-                        False, False, # USE_LOOP_NORMALS, EXPORT_PBS
-                        False) # FORCE_EXPORT_VERTEX_COLORS
+    print('RELOADING MODULES')
+
+    import importlib
+
+    importlib.reload(yabee_libs.egg_writer)
+    egg_writer = yabee_libs.egg_writer
+
+    egg_writer.write_out(FILE_PATH,
+                         ANIMATIONS, ANIMS_FROM_ACTIONS,
+                         EXPORT_UV_IMAGE_AS_TEXTURE,
+                         SEPARATE_ANIM_FILE,
+                         ANIM_ONLY,
+                         COPY_TEX_FILES,
+                         TEX_PATH,
+                         CALC_TBS,
+                         TEXTURE_PROCESSOR,
+                         BAKE_LAYERS,
+                         True, True, True,  # MERGE_ACTOR_MESH, APPLY_MOD, PVIEW
+                         False, False,  # USE_LOOP_NORMALS, EXPORT_PBS
+                         False)  # FORCE_EXPORT_VERTEX_COLORS
