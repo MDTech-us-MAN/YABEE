@@ -170,7 +170,6 @@ class Group:
         """
         egg_str = []
         if self.object:
-            print(self.object)
             if self.object.__class__ == bpy.types.Bone:
                 egg_str.append('%s<Joint> %s {\n' % ('  ' * level, eggSafeName(self.object.yabee_name)))
             else:
@@ -566,7 +565,10 @@ class EGGMeshObjectData(EGGBaseObjectData):
 
         @return: list of vertex attributes.
         """
-        co = self.obj_ref.matrix_world @ self.obj_ref.data.vertices[vidx].co
+        if self.obj_ref.billboard:
+            co = self.obj_ref.data.vertices[vidx].co
+        else:
+            co = self.obj_ref.matrix_world @ self.obj_ref.data.vertices[vidx].co
         attributes.append('%f %f %f' % co[:])
         return attributes
 
