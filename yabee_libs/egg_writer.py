@@ -1233,7 +1233,7 @@ def get_egg_materials_str(object_names=None):
                 elif nodeTree.links[0].to_node.name == 'Material Output':
                     print("INFO: {} is using for!".format(nodeTree.links[0].to_node.name)),
                     objects = bpy.context.selected_objects
-                    for node in bpy.data.materials[0].node_tree.nodes:
+                    for node in nodeTree.nodes:
                         if node.name == "Principled BSDF":
                             principled_bsdf = node
                             basecol = list(principled_bsdf.inputs["Base Color"].default_value)
@@ -1278,12 +1278,6 @@ def get_egg_materials_str(object_names=None):
                         mat_str += '  <Scalar> roughness { %s }\n' % STRF(mat.roughness)
                         mat_str += '  <Scalar> metallic { %s }\n' % STRF(mat.metallic)
                         mat_str += '  <Scalar> local { %s }\n' % STRF(0.0)
-
-        if TEXTURE_PROCESSOR == 'BAKE' and mat.use_nodes:
-            mat_str += '  <Scalar> diffr { 1.0 }\n'
-            mat_str += '  <Scalar> diffg { 1.0 }\n'
-            mat_str += '  <Scalar> diffb { 1.0 }\n'
-
         mat_str += '}\n\n'
 
     used_textures = {}
