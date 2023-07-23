@@ -175,6 +175,9 @@ class Group:
             else:
                 egg_str.append('%s<Group> %s {\n'\
                                % ('  ' * level, eggSafeName(self.object.yabee_name)))
+                
+                for key in self.object.keys():
+                     egg_str += f"<Tag> {key} {{{self.object[key]}}}\n"
                 if self.object.ObjectType:
                     for val in self.object.ObjectType.split(','):
                         vals = ('  ' * level, val)
