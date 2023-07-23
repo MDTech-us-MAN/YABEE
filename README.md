@@ -11,5 +11,5 @@ Exporting:
 - Materials and textures (Partially)
 - Armature (skeleton) animation
 - ShapeKeys (morph) animation
-- <Tag> and collision options export through Blender's "Game logic" -> "properties"
+- <Tag> options export through Blender's "Custom Properties"
 - Non cyclic NURBS Curves
