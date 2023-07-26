@@ -502,9 +502,10 @@ class EGGMeshObjectData(EGGBaseObjectData):
 
     def pre_convert_vtx_color(self):
         color_vtx_ref = []
-        if self.obj_ref.data.vertex_colors.active:
-            for col in self.obj_ref.data.vertex_colors.active.data:
-                color_vtx_ref.append(col.color)  # We have one color per data color
+        for f in self.obj_ref.data.polygons:
+         for v in f.vertices:
+            color = self.obj_ref.data.attributes["Color"].data[v].color
+            color_vtx_ref.append(color)  # We have one color per data color
         return color_vtx_ref
 
     def pre_calc_TBS(self):
